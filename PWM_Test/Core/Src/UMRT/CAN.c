@@ -49,33 +49,50 @@ uint8_t rxdata[1][8];
 
 HAL_StatusTypeDef CAN_Transmit(const CAN_HandleTypeDef *hcan, const CAN_TxHeaderTypeDef *pHeader, const uint8_t aData[], uint32_t *pTxMailbox);
 
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan) {
-	printf("HAL_CAN_RxFifo0MsgPendingCallback\r\n");
-	HAL_StatusTypeDef result = HAL_CAN_GetRxMessage(hcan, 0, &rxheader[0], rxdata[0]);
-	if (result != HAL_OK) {
-		printf("HAL_CAN_RxFifo0MsgPendingCallback function HAL_CAN_GetRxMessage failed with result 0x%02X\r\n", result);
-		return;
-	}
+//void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan) {
+//	printf("HAL_CAN_RxFifo0MsgPendingCallback\r\n");
+//	HAL_StatusTypeDef result = HAL_CAN_GetRxMessage(hcan, 0, &rxheader[0], rxdata[0]);
+//	if (result != HAL_OK) {
+//		printf("HAL_CAN_RxFifo0MsgPendingCallback function HAL_CAN_GetRxMessage failed with result 0x%02X\r\n", result);
+//		return;
+//	}
+//
+//	if (rxheader[0].IDE == CAN_ID_EXT) {
+//		printf("  -> ID (ext) %lu (%08x)\r\n", rxheader[0].ExtId, rxheader[0].ExtId);
+//	} else {
+//		printf("  -> ID (std) %lu (%03x)\r\n", rxheader[0].StdId, rxheader[0].StdId);
+//	}
+//	printf("  -> LENGTH %lu\r\n", rxheader[0].DLC);
+//	printf("     DATA == (%02x%02x %02x%02x %02x%02x %02x%02x)\r\n",
+//			rxdata[0][0], rxdata[0][1], rxdata[0][2], rxdata[0][3], rxdata[0][4], rxdata[0][5], rxdata[0][6], rxdata[0][7], rxdata[0][8]);
+//	printf("  -> DATA[0] % 3u (%02x)\r\n", rxdata[0][0], rxdata[0][0]);
+//	printf("  -> DATA[1] % 3u (%02x)\r\n", rxdata[0][1], rxdata[0][1]);
+//	printf("  -> DATA[2] % 3u (%02x)\r\n", rxdata[0][2], rxdata[0][2]);
+//	printf("  -> DATA[3] % 3u (%02x)\r\n", rxdata[0][3], rxdata[0][3]);
+//	printf("  -> DATA[4] % 3u (%02x)\r\n", rxdata[0][4], rxdata[0][4]);
+//	printf("  -> DATA[5] % 3u (%02x)\r\n", rxdata[0][5], rxdata[0][5]);
+//	printf("  -> DATA[6] % 3u (%02x)\r\n", rxdata[0][6], rxdata[0][6]);
+//	printf("  -> DATA[7] % 3u (%02x)\r\n", rxdata[0][7], rxdata[0][7]);
+//
+//	CAN_MsgReceived(hcan, &rxheader[0], rxdata[0]);
+//}
 
-	if (rxheader[0].IDE == CAN_ID_EXT) {
-		printf("  -> ID (ext) %lu (%08x)\r\n", rxheader[0].ExtId, rxheader[0].ExtId);
-	} else {
-		printf("  -> ID (std) %lu (%03x)\r\n", rxheader[0].StdId, rxheader[0].StdId);
-	}
-	printf("  -> LENGTH %lu\r\n", rxheader[0].DLC);
-	printf("     DATA == (%02x%02x %02x%02x %02x%02x %02x%02x)\r\n",
-			rxdata[0][0], rxdata[0][1], rxdata[0][2], rxdata[0][3], rxdata[0][4], rxdata[0][5], rxdata[0][6], rxdata[0][7], rxdata[0][8]);
-	printf("  -> DATA[0] % 3u (%02x)\r\n", rxdata[0][0], rxdata[0][0]);
-	printf("  -> DATA[1] % 3u (%02x)\r\n", rxdata[0][1], rxdata[0][1]);
-	printf("  -> DATA[2] % 3u (%02x)\r\n", rxdata[0][2], rxdata[0][2]);
-	printf("  -> DATA[3] % 3u (%02x)\r\n", rxdata[0][3], rxdata[0][3]);
-	printf("  -> DATA[4] % 3u (%02x)\r\n", rxdata[0][4], rxdata[0][4]);
-	printf("  -> DATA[5] % 3u (%02x)\r\n", rxdata[0][5], rxdata[0][5]);
-	printf("  -> DATA[6] % 3u (%02x)\r\n", rxdata[0][6], rxdata[0][6]);
-	printf("  -> DATA[7] % 3u (%02x)\r\n", rxdata[0][7], rxdata[0][7]);
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+    CAN_RxHeaderTypeDef rxHeader;
+    uint8_t             rxData[8];
 
-	CAN_MsgReceived(hcan, &rxheader[0], rxdata[0]);
+    //Empty entire FIFO
+    while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) > 0)
+    {
+        if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData) == HAL_OK)
+        {
+            //Forward to high level parser
+            CAN_MsgReceived(hcan, &rxHeader, rxData);
+        }
+    }
 }
+
 
 void HAL_CAN_RxFifo0FullCallback(CAN_HandleTypeDef* hcan) { printf("HAL_CAN_RxFifo0FullCallback\r\n"); }
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef* hcan) { printf("HAL_CAN_RxFifo1MsgPendingCallback\r\n"); }

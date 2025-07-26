@@ -4,7 +4,7 @@
 #define HAL_TIM_MODULE_ENABLED
  
 #include "stm32f4xx_hal.h"
- 
+
 // DC Motor Rotation Directions
 #define DIR_CW    0
 #define DIR_CCW   1

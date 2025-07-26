@@ -23,8 +23,6 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdbool.h>
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx_hal_can.h"
 #include "UMRT/CAN.h"
 
 #include "../../ECUAL/DC_MOTOR/DC_MOTOR.h"
@@ -79,33 +77,58 @@ void PID_UpdateTargetSpeed(MotorMessage targetSpeed) {
 //	PWM_RES[3] = (int16_t) (motor_speed[3] * MAX_RPM * 60.0f * WHEEL_DIA) * 4096.0f;
 }
 
-void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uint8_t *rxdata) {
-	// For CAN IDs, try to stay in the range: 0xFF00-0xFFFF or 0x1FF00-0x1FFFF.
-	// This fits better in J1939 if we decide to move to that system.
-	printf("CAN_MsgReceived\r\n");
-	switch (rxheader->ExtId) {
-	case 0xFF10: // Motor control
-		assert(rxheader->DLC == 8);
-		printf("Motor Message received!\r\n");
+void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uint8_t *rxdata)
+{
+    uint32_t id = (rxheader->IDE == CAN_ID_STD) ? rxheader->StdId : rxheader->ExtId;
+    switch (id)
+    {
+    //Jetson
+    case 0xFF10:
+    case 0x110:
+        if (rxheader->DLC != 8) return;
 
-		MotorMessage targetSpeed = {0};
-		targetSpeed.motor1 = ((int16_t*)rxdata)[0];
-		targetSpeed.motor2 = ((int16_t*)rxdata)[1];
-		targetSpeed.motor3 = ((int16_t*)rxdata)[2];
-		targetSpeed.motor4 = ((int16_t*)rxdata)[3];
+        MotorMessage targetSpeed;
+        targetSpeed.motor1 = ((int16_t*)rxdata)[0];
+        targetSpeed.motor2 = ((int16_t*)rxdata)[1];
+        targetSpeed.motor3 = ((int16_t*)rxdata)[2];
+        targetSpeed.motor4 = ((int16_t*)rxdata)[3];
 
-		printf("  --> targetSpeed.motor1 == %i (%04x)\r\n", targetSpeed.motor1, targetSpeed.motor1);
-		printf("  --> targetSpeed.motor2 == %i (%04x)\r\n", targetSpeed.motor2, targetSpeed.motor2);
-		printf("  --> targetSpeed.motor3 == %i (%04x)\r\n", targetSpeed.motor3, targetSpeed.motor3);
-		printf("  --> targetSpeed.motor4 == %i (%04x)\r\n", targetSpeed.motor4, targetSpeed.motor4);
+        PID_UpdateTargetSpeed(targetSpeed);
+        break;
 
-		PID_UpdateTargetSpeed(targetSpeed);
-
-		break;
-	case 0xFF40: // Headlights
-		printf("Headlights Message received!\r\n");
-	}
+    //Headlights
+    case 0xFF40:
+        break;
+    }
 }
+
+//void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uint8_t *rxdata) {
+//	// For CAN IDs, try to stay in the range: 0xFF00-0xFFFF or 0x1FF00-0x1FFFF.
+//	// This fits better in J1939 if we decide to move to that system.
+//	printf("CAN_MsgReceived\r\n");
+//	switch (rxheader->ExtId) {
+//	case 0xFF10: // Motor control
+//		assert(rxheader->DLC == 8);
+//		printf("Motor Message received!\r\n");
+//
+//		MotorMessage targetSpeed = {0};
+//		targetSpeed.motor1 = ((int16_t*)rxdata)[0];
+//		targetSpeed.motor2 = ((int16_t*)rxdata)[1];
+//		targetSpeed.motor3 = ((int16_t*)rxdata)[2];
+//		targetSpeed.motor4 = ((int16_t*)rxdata)[3];
+//
+////		printf("  --> targetSpeed.motor1 == %i (%04x)\r\n", targetSpeed.motor1, targetSpeed.motor1);
+////		printf("  --> targetSpeed.motor2 == %i (%04x)\r\n", targetSpeed.motor2, targetSpeed.motor2);
+////		printf("  --> targetSpeed.motor3 == %i (%04x)\r\n", targetSpeed.motor3, targetSpeed.motor3);
+////		printf("  --> targetSpeed.motor4 == %i (%04x)\r\n", targetSpeed.motor4, targetSpeed.motor4);
+//
+//		PID_UpdateTargetSpeed(targetSpeed);
+//
+//		break;
+//	case 0xFF40: // Headlights
+//		printf("Headlights Message received!\r\n");
+//	}
+//}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -280,8 +303,8 @@ int main(void)
 	//Motor R
 	if (PWM_RES[1] < 0)
 	{
-		DC_MOTOR_Set_Dir(DC_MOTOR2, DIR_CCW);
-		DC_MOTOR_Set_Dir(DC_MOTOR4, DIR_CCW);
+		DC_MOTOR_Set_Dir(DC_MOTOR2, DIR_CW);
+		DC_MOTOR_Set_Dir(DC_MOTOR4, DIR_CW);
 		N_PWM_RES[1] = -1 * PWM_RES[1];
 		N_PWM_RES[3] = -1 * PWM_RES[3];
 
@@ -298,8 +321,8 @@ int main(void)
 	}
 	else
 	{
-		DC_MOTOR_Set_Dir(DC_MOTOR2, DIR_CW);
-		DC_MOTOR_Set_Dir(DC_MOTOR4, DIR_CW);
+		DC_MOTOR_Set_Dir(DC_MOTOR2, DIR_CCW);
+		DC_MOTOR_Set_Dir(DC_MOTOR4, DIR_CCW);
 
 		if (PWM_RES[1] < 0.05*4095)
 		{
