@@ -87,6 +87,12 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     {
         if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData) == HAL_OK)
         {
+            printf("RX ID=0x%08lX DLC=%lu DATA=%02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                   rxHeader.IDE == CAN_ID_EXT ? rxHeader.ExtId : rxHeader.StdId,
+                   rxHeader.DLC,
+                   rxData[0], rxData[1], rxData[2], rxData[3],
+                   rxData[4], rxData[5], rxData[6], rxData[7]);
+
             //Forward to high level parser
             CAN_MsgReceived(hcan, &rxHeader, rxData);
         }
