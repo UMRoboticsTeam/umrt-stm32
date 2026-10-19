@@ -23,7 +23,10 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdbool.h>
+#include <math.h>
 #include "UMRT/CAN.h"
+#include "UMRT/messages.h"
+#include "UMRT/headlight_control.h"
 
 #include "../../ECUAL/DC_MOTOR/DC_MOTOR.h"
 
@@ -51,20 +54,51 @@ typedef struct {
 	int16_t motor4;
 } MotorMessage;
 
+#define SOIL_SENSOR_FRAME_ID  (0x18FFEB00u)
+
+typedef struct {
+    int16_t temperature; // raw, 0.1 degC/bit
+    int16_t humidity;    // raw, 0.1 %RH/bit
+    int16_t ec;          // raw, unscaled (see note below)
+    int16_t ph;          // raw, 0.1 pH/bit
+} SoilSensorMessage;
+
+void PrintSoilSensor(SoilSensorMessage msg) {
+    printf("Soil: T=%.1f C  H=%.1f %%RH  EC=%d  pH=%.1f\r\n",
+           msg.temperature * 0.1f,
+           msg.humidity * 0.1f,
+           msg.ec * 0.1f,
+           msg.ph * 0.1f);
+}
+
 int16_t PWM_RES[] = {0, 0, 0, 0};
 int16_t N_PWM_RES[] = {0, 0, 0, 0};
 float motor_speed[] = {0, 0, 0, 0};
 
-float MAX_RPM = 1.0f/77.0f;
+float MAX_RPM = 1.0f/155.0f;
 float WHEEL_DIA = 1.0f/(PI_VALUE * 200.0f);
 float SPEED_SCALE = 0.085f;
 
+volatile float   rpm[4]        = {0.0f, 0.0f, 0.0f, 0.0f};
+volatile int32_t prev_count[4] = {0, 0, 0, 0};
+volatile float wheel_rpm[4] = {0.0f, 0.0f, 0.0f, 0.0f};  /* post-gear-ratio RPM, one per encoder_timers[] entry */
+
+volatile int32_t last_delta[4] = {0, 0, 0, 0};  /* counts moved last sample    */
+
+#define FEEDBACK_TX_PERIOD_MS 100u   /* 10 Hz — tune this alone, independent of RPM sampling */
+static uint32_t last_feedback_tx_ms = 0;
+
 
 void PID_UpdateTargetSpeed(MotorMessage targetSpeed) {
-	motor_speed[0] = targetSpeed.motor1 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-	motor_speed[1] = targetSpeed.motor2 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-	motor_speed[2] = targetSpeed.motor3 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-	motor_speed[3] = targetSpeed.motor4 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
+//	motor_speed[0] = targetSpeed.motor1 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
+//	motor_speed[1] = targetSpeed.motor2 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
+//	motor_speed[2] = targetSpeed.motor3 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
+//	motor_speed[3] = targetSpeed.motor4 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
+
+	motor_speed[0] = targetSpeed.motor1 * MAX_RPM * 4096.0f;
+	motor_speed[1] = targetSpeed.motor2 * MAX_RPM * 4096.0f;
+	motor_speed[2] = targetSpeed.motor3 * MAX_RPM * 4096.0f;
+	motor_speed[3] = targetSpeed.motor4 * MAX_RPM * 4096.0f;
 
 	PWM_RES[0] = (int16_t) motor_speed[0];
 	PWM_RES[1] = (int16_t) motor_speed[1];
@@ -79,9 +113,12 @@ void PID_UpdateTargetSpeed(MotorMessage targetSpeed) {
 
 void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uint8_t *rxdata)
 {
+
+
     uint32_t id = (rxheader->IDE == CAN_ID_STD) ? rxheader->StdId : rxheader->ExtId;
     switch (id)
     {
+    //Legacy
     //Jetson
     case 0xFF10:
     case 0x110:
@@ -96,9 +133,52 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
         PID_UpdateTargetSpeed(targetSpeed);
         break;
 
-    //Headlights
-    case 0xFF40:
+    case MESSAGES_ROVER_SPEED_CONTROL_FRAME_ID:
+        {
+
+            struct messages_rover_speed_control_t cmd;
+            if (messages_rover_speed_control_unpack(&cmd, rxdata, rxheader->DLC) != 0) {
+                printf("Rover_Speed_Control: unpack failed (DLC=%u)\r\n", rxheader->DLC);
+                return;
+            }
+
+            double left_rpm  = messages_rover_speed_control_left_angular_velocity_decode(cmd.left_angular_velocity);
+            double right_rpm = messages_rover_speed_control_right_angular_velocity_decode(cmd.right_angular_velocity);
+
+            //printf("left rpm: %.2f, right rpm: %.2f\r\n", left_rpm, right_rpm);
+
+            MotorMessage targetSpeed;
+            targetSpeed.motor1 = left_rpm;   // left, front
+            targetSpeed.motor3 = left_rpm;   // left, rear
+            targetSpeed.motor2 = right_rpm;  // right, front
+            targetSpeed.motor4 = right_rpm;  // right, rear
+
+            PID_UpdateTargetSpeed(targetSpeed);
+            break;
+        }
+
+    case SOIL_SENSOR_FRAME_ID:
+    {
+        if (rxheader->DLC != 8) return;
+
+        SoilSensorMessage soil;
+        soil.temperature = ((int16_t*)rxdata)[0];
+        soil.humidity    = ((int16_t*)rxdata)[1];
+        soil.ec          = ((int16_t*)rxdata)[2];
+        soil.ph          = ((int16_t*)rxdata)[3];
+
+        //PrintSoilSensor(soil);
         break;
+    }
+
+    //Headlights
+    case MESSAGES_FRONT_HEADLIGHT_COMMAND_FRAME_ID:
+    {
+    	 Headlight_HandleCanFrame(rxheader, rxdata);
+
+    	 break;
+    }
+
     }
 }
 
@@ -139,12 +219,19 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan1;
 
+TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim12;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 // ADC_ChannelConfTypeDef sConfig = {0};
+
+//TIM_HandleTypeDef *encoder_timers[4] = {&htim1, &htim3, &htim4, &htim5};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -153,7 +240,15 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_TIM12_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
+
+uint8_t crc8_j1850(const uint8_t *data, size_t len);
+static HAL_StatusTypeDef Send_Rover_Speed_Feedback(float rpm_front_left, float rpm_front_right,
+                                                     float rpm_rear_left, float rpm_rear_right);
 
 /* USER CODE END PFP */
 
@@ -202,8 +297,13 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM3_Init();
   MX_CAN1_Init();
+  MX_TIM2_Init();
+  MX_TIM1_Init();
+  MX_TIM12_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   CAN_Setup(&hcan1);
+  Headlight_Init();
 
   printf("starting...");
   HAL_StatusTypeDef status = HAL_CAN_Start(&hcan1);
@@ -223,6 +323,19 @@ int main(void)
   DC_MOTOR_Start(DC_MOTOR2, DIR_CW, 0);
   DC_MOTOR_Start(DC_MOTOR3, DIR_CW, 0);
   DC_MOTOR_Start(DC_MOTOR4, DIR_CW, 0);
+
+  HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+  //HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
+
+  HAL_TIM_Base_Start(&htim12);
+
+//  for (int i = 0; i < 4; i++) {
+//      prev_count[i] = (int32_t)__HAL_TIM_GET_COUNTER(encoder_timers[i]);
+//  }
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -335,7 +448,41 @@ int main(void)
 			DC_MOTOR_Set_Speed(DC_MOTOR4, PWM_RES[3]);
 		}
 	}
+
+	static uint16_t prev_tick = 0;
+	uint16_t now      = (uint16_t)__HAL_TIM_GET_COUNTER(&htim12);
+	uint16_t dt_ticks = now - prev_tick;
+
+//	if (dt_ticks >= 200)
+//	{
+//	    prev_tick = now;
+//	    float dt_sec = dt_ticks * 0.0001f;
+//
+//	    for (int i = 0; i < 4; i++)
+//	    {
+//	        uint16_t count16 = (uint16_t)__HAL_TIM_GET_COUNTER(encoder_timers[i]);
+//	        uint16_t diff16   = (uint16_t)(count16 - (uint16_t)prev_count[i]);
+//	        int32_t  delta    = (int32_t)(int16_t)diff16;
+//	        prev_count[i]     = (int32_t)count16;
+//	        last_delta[i]     = delta;
+//
+//	        float rev     = (float)delta / 1024.0f;
+//	        float raw_rpm = (rev / dt_sec) * 60.0f;
+//	        rpm[i]        = rpm[i] * 0.8f + raw_rpm * 0.2f;
+//	        wheel_rpm[i]  = rpm[i] / 77.0f;
+//
+//	        //printf("wheel %d: %.2f rpm\r\n", i, wheel_rpm[i]);
+//	    }
+//
+//	    uint32_t now_ms = HAL_GetTick();
+//	    if ((now_ms - last_feedback_tx_ms) >= FEEDBACK_TX_PERIOD_MS)
+//	    {
+//	        last_feedback_tx_ms = now_ms;
+//	        //Send_Rover_Speed_Feedback(wheel_rpm[0], wheel_rpm[1], wheel_rpm[2], wheel_rpm[3]);
+//	    }
+//	}
   }
+
   /* USER CODE END 3 */
 }
 
@@ -424,6 +571,127 @@ static void MX_CAN1_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65535;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 4;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 4;
+  if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -435,9 +703,8 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 0 */
 
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM3_Init 1 */
 
@@ -448,16 +715,16 @@ static void MX_TIM3_Init(void)
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 4;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 4;
+  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
@@ -467,30 +734,96 @@ static void MX_TIM3_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
-  HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 4;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 4;
+  if (HAL_TIM_Encoder_Init(&htim4, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
+  * @brief TIM12 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM12_Init(void)
+{
+
+  /* USER CODE BEGIN TIM12_Init 0 */
+
+  /* USER CODE END TIM12_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+
+  /* USER CODE BEGIN TIM12_Init 1 */
+
+  /* USER CODE END TIM12_Init 1 */
+  htim12.Instance = TIM12;
+  htim12.Init.Prescaler = 8399;
+  htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim12.Init.Period = 65535;
+  htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim12.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim12) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim12, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM12_Init 2 */
+
+  /* USER CODE END TIM12_Init 2 */
 
 }
 
@@ -546,8 +879,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9
-                          |GPIO_PIN_10, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4|LD2_Pin|GPIO_PIN_7, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -555,14 +893,32 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD2_Pin PA7 PA8 PA9
-                           PA10 */
-  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9
-                          |GPIO_PIN_10;
+  /*Configure GPIO pin : PC0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PA4 LD2_Pin PA7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4|LD2_Pin|GPIO_PIN_7;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB0 PB4 PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_4|GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -570,6 +926,62 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+uint8_t crc8_j1850(const uint8_t *data, size_t len)
+{
+    uint8_t crc = 0xFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x1D)
+                                : (uint8_t)(crc << 1);
+        }
+    }
+    return crc ^ 0xFF;
+}
+
+static uint8_t feedback_msg_counter = 0;
+
+static HAL_StatusTypeDef Send_Rover_Speed_Feedback(float rpm_front_left, float rpm_front_right,
+                                                     float rpm_rear_left, float rpm_rear_right)
+{
+    CAN_TxHeaderTypeDef txHeader = {0};
+    uint8_t  txData[8];
+    uint32_t txMailbox;
+    struct messages_rover_speed_feedback_t fb = {0};
+
+    /* Clamp to the encodable physical range before handing off to the generated
+       encoders - the encode functions do the scale/offset math, not the clamping. */
+    float vel_fl = rpm_front_left  < 0.0f ? 0.0f : (rpm_front_left  > 4015.875f ? 4015.875f : rpm_front_left);
+    float vel_fr = rpm_front_right < 0.0f ? 0.0f : (rpm_front_right > 4015.875f ? 4015.875f : rpm_front_right);
+    float dis_l  = fabsf(rpm_front_left  - rpm_rear_left);
+    float dis_r  = fabsf(rpm_front_right - rpm_rear_right);
+    if (dis_l > 31.25f) dis_l = 31.25f;
+    if (dis_r > 31.25f) dis_r = 31.25f;
+
+    fb.left_angular_velocity  = messages_rover_speed_feedback_left_angular_velocity_encode(vel_fl);
+    fb.right_angular_velocity = messages_rover_speed_feedback_right_angular_velocity_encode(vel_fr);
+    fb.left_disagreement      = messages_rover_speed_feedback_left_disagreement_encode(dis_l);
+    fb.right_disagreement     = messages_rover_speed_feedback_right_disagreement_encode(dis_r);
+
+    feedback_msg_counter = (feedback_msg_counter + 1) % 251;  /* Message_Counter: /max:250 */
+    fb.message_counter = feedback_msg_counter;                /* factor 1 / offset 0 - no encode needed */
+    fb.crc = 0;                                                /* placeholder; real CRC written below */
+
+    if (messages_rover_speed_feedback_pack(txData, &fb, sizeof(txData)) < 0) {
+        return HAL_ERROR;   /* buffer too small - shouldn't happen with a fixed 8-byte array */
+    }
+
+    txData[7] = crc8_j1850(txData, 7);   /* <-- your existing CRC function, overwrites the placeholder */
+
+    txHeader.ExtId = MESSAGES_ROVER_SPEED_FEEDBACK_FRAME_ID;
+    txHeader.IDE   = CAN_ID_EXT;
+    txHeader.RTR   = CAN_RTR_DATA;
+    txHeader.DLC   = 8;
+    txHeader.TransmitGlobalTime = DISABLE;
+
+    return HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+}
 
 /* USER CODE END 4 */
 
