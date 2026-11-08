@@ -1,0 +1,71 @@
+using "platforms/cpus/stm32f4.repl"
+
+//***** BOARD CONFIGURATION *****//
+
+// NON VOLATILE MEMORY
+// IN HEX, SO 0x80000 IS 512 KB
+flash:
+    size: 0x80000
+
+// VOLATILE MEMORY:: 
+// IN HEX, SO 0x20000 IS 128 KB
+sram:
+    size: 0x20000
+
+//***** Output configuration *****//
+
+// Note: You do not need to add the CAN information as can1 will automatically edit the buffer
+// Note: Use a LED to test PWM Motors
+
+// TIMER 3 LEDS
+led_ld2: Miscellaneous.LED @ gpioPortA
+led_ch1: Miscellaneous.LED @ gpioPortA
+led_ch2: Miscellaneous.LED @ gpioPortC
+led_ch3: Miscellaneous.LED @ gpioPortC
+led_ch4: Miscellaneous.LED @ gpioPortB
+
+// MOTOR DIRECTION LEDS
+led_m1p1: Miscellaneous.LED @ gpioPortA
+led_B13: Miscellaneous.LED @ gpioPortB
+
+led_m2p1: Miscellaneous.LED @ gpioPortB
+led_m3p1: Miscellaneous.LED @ gpioPortB
+led_m4p1: Miscellaneous.LED @ gpioPortB
+
+// HEADLIGHTS LEDS
+led_hl: Miscellaneous.LED @ gpioPortC
+
+
+// GPIO A: 0 TO 13
+gpioPortA:
+    4 -> led_m1p1@0   //MOTOR ONE GPIO PIN 1
+    5 -> led_ld2@0    //PA5 LD 2 GREEN LED
+    6 -> led_ch1@0    //PA6 TIM3_CH1
+    
+// GPIO B: 0 TO 15
+gpioPortB:
+    0  -> led_m3p1@0  //MOTOR THREE GPIO PIN 1
+    1  -> led_ch4@0  //PB1 TIM3_CH4
+    4  -> led_m2p1@0 //MOTOR TWO GPIO PIN 1
+    5  -> led_m4p1@0  //MOTOR FOUR GPIO PIN 1
+    13 -> led_B13@0  // PLACEHOLDER B13 PINOUT
+    
+//GPIO C: 0 TO 15
+gpioPortC:
+    0 -> led_hl@0  //PC0 HEADLIGHTS
+    7 -> led_ch2@0 //PC7 TIM3_CH2
+    8 -> led_ch3@0 //PC8 TIM3_CH3
+    
+//GPIO D: 2 TO 2 
+
+//***** Can Configuration *****//
+can1:
+    0 -> nvic@19     // Connects CAN1_TX interrupt line to NVIC vector 19
+    1 -> nvic@20     // Connects CAN1_RX0 interrupt line to NVIC vector 20
+    2 -> nvic@21     // Connects CAN1_RX1 interrupt line to NVIC vector 21
+    3 -> nvic@22     // Connects CAN1_SCE interrupt line to NVIC vector 22
+
+
+timer2: @ sysbus 0x40000000
+timer3: @ sysbus 0x40000400
+timer4: @ sysbus 0x40000800

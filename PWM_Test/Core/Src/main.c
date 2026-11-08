@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <math.h>
 #include "UMRT/CAN.h"
@@ -48,10 +49,10 @@
 #define PI_VALUE 3.14159265358979323846
 
 typedef struct {
-	int16_t motor1;
-	int16_t motor2;
-	int16_t motor3;
-	int16_t motor4;
+	float motor1;
+	float motor2;
+	float motor3;
+	float motor4;
 } MotorMessage;
 
 #define SOIL_SENSOR_FRAME_ID  (0x18FFEB00u)
@@ -90,31 +91,34 @@ static uint32_t last_feedback_tx_ms = 0;
 
 
 void PID_UpdateTargetSpeed(MotorMessage targetSpeed) {
-//	motor_speed[0] = targetSpeed.motor1 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-//	motor_speed[1] = targetSpeed.motor2 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-//	motor_speed[2] = targetSpeed.motor3 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-//	motor_speed[3] = targetSpeed.motor4 * MAX_RPM * 60.0f * WHEEL_DIA * 4096.0f * SPEED_SCALE;
-
 	motor_speed[0] = targetSpeed.motor1 * MAX_RPM * 4096.0f;
 	motor_speed[1] = targetSpeed.motor2 * MAX_RPM * 4096.0f;
 	motor_speed[2] = targetSpeed.motor3 * MAX_RPM * 4096.0f;
 	motor_speed[3] = targetSpeed.motor4 * MAX_RPM * 4096.0f;
+        
+        for (int i = 0; i < 4; i++) {
+            if (motor_speed[i] > 32767.0f) {
+                motor_speed[i] = 32767.0f;
+            } else if (motor_speed[i] < -32767.0f) {
+                motor_speed[i] = -32767.0f;
+            }
+            
+            PWM_RES[i] = (int16_t)motor_speed[i];
+        }
+        
+        printf("MAX_RPM   = %.15f\r\n", MAX_RPM);
+        printf("4096 term = %.15f\r\n", 4096.0f);
+        printf("rpm       = %.15f\r\n", targetSpeed.motor1);
 
-	PWM_RES[0] = (int16_t) motor_speed[0];
-	PWM_RES[1] = (int16_t) motor_speed[1];
-	PWM_RES[2] = (int16_t) motor_speed[2];
-	PWM_RES[3] = (int16_t) motor_speed[3];
+        printf("rpm*MAX   = %.15f\r\n",
+               targetSpeed.motor1 * MAX_RPM);
 
-//	PWM_RES[0] = (int16_t) (motor_speed[0] * MAX_RPM * 60.0f * WHEEL_DIA) * 4096.0f;
-//	PWM_RES[1] = (int16_t) (motor_speed[1] * MAX_RPM * 60.0f * WHEEL_DIA) * 4096.0f;
-//	PWM_RES[2] = (int16_t) (motor_speed[2] * MAX_RPM * 60.0f * WHEEL_DIA) * 4096.0f;
-//	PWM_RES[3] = (int16_t) (motor_speed[3] * MAX_RPM * 60.0f * WHEEL_DIA) * 4096.0f;
+        printf("rpm*MAX*4096 = %.15f\r\n",
+               targetSpeed.motor1 * MAX_RPM * 4096.0f);
 }
 
 void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uint8_t *rxdata)
 {
-
-
     uint32_t id = (rxheader->IDE == CAN_ID_STD) ? rxheader->StdId : rxheader->ExtId;
     switch (id)
     {
@@ -125,27 +129,47 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
         if (rxheader->DLC != 8) return;
 
         MotorMessage targetSpeed;
-        targetSpeed.motor1 = ((int16_t*)rxdata)[0];
-        targetSpeed.motor2 = ((int16_t*)rxdata)[1];
-        targetSpeed.motor3 = ((int16_t*)rxdata)[2];
-        targetSpeed.motor4 = ((int16_t*)rxdata)[3];
-
+        const int16_t m1 = (int16_t)((uint16_t)rxdata[1] << 8 | rxdata[0]);
+        const int16_t m2 = (int16_t)((uint16_t)rxdata[3] << 8 | rxdata[2]);
+        const int16_t m3 = (int16_t)((uint16_t)rxdata[5] << 8 | rxdata[4]);
+        const int16_t m4 = (int16_t)((uint16_t)rxdata[7] << 8 | rxdata[6]);
+        
+        if (
+          (m1 > 0 && m3 < 0) ||
+          (m1 < 0 && m3 > 0)
+        ) {
+            break;
+        }
+        
+        
+        if (
+          (m2 > 0 && m4 < 0) ||
+          (m2 < 0 && m4 > 0)
+        ) {
+              break;
+        }
+        
+        
+        targetSpeed.motor1 = (float)m1;
+        targetSpeed.motor2 = (float)m2;
+        targetSpeed.motor3 = (float)m3;
+        targetSpeed.motor4 = (float)m4;
+        
         PID_UpdateTargetSpeed(targetSpeed);
         break;
 
     case MESSAGES_ROVER_SPEED_CONTROL_FRAME_ID:
         {
-
             struct messages_rover_speed_control_t cmd;
             if (messages_rover_speed_control_unpack(&cmd, rxdata, rxheader->DLC) != 0) {
                 printf("Rover_Speed_Control: unpack failed (DLC=%u)\r\n", rxheader->DLC);
                 return;
             }
 
-            double left_rpm  = messages_rover_speed_control_left_angular_velocity_decode(cmd.left_angular_velocity);
-            double right_rpm = messages_rover_speed_control_right_angular_velocity_decode(cmd.right_angular_velocity);
+            float left_rpm  = messages_rover_speed_control_left_angular_velocity_decode(cmd.left_angular_velocity);
+            float right_rpm = messages_rover_speed_control_right_angular_velocity_decode(cmd.right_angular_velocity);
 
-            //printf("left rpm: %.2f, right rpm: %.2f\r\n", left_rpm, right_rpm);
+            printf("left rpm: %.2f, right rpm: %.2f\r\n", left_rpm, right_rpm);
 
             MotorMessage targetSpeed;
             targetSpeed.motor1 = left_rpm;   // left, front
@@ -172,8 +196,9 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
     }
 
     //Headlights
-    case MESSAGES_FRONT_HEADLIGHT_COMMAND_FRAME_ID:
+    case MESSAGES_FRONT_HEADLIGHT_COMMAND_FRAME_ID: 
     {
+         printf("Headlight msg\r\n");
     	 Headlight_HandleCanFrame(rxheader, rxdata);
 
     	 break;
@@ -181,34 +206,6 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
 
     }
 }
-
-//void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uint8_t *rxdata) {
-//	// For CAN IDs, try to stay in the range: 0xFF00-0xFFFF or 0x1FF00-0x1FFFF.
-//	// This fits better in J1939 if we decide to move to that system.
-//	printf("CAN_MsgReceived\r\n");
-//	switch (rxheader->ExtId) {
-//	case 0xFF10: // Motor control
-//		assert(rxheader->DLC == 8);
-//		printf("Motor Message received!\r\n");
-//
-//		MotorMessage targetSpeed = {0};
-//		targetSpeed.motor1 = ((int16_t*)rxdata)[0];
-//		targetSpeed.motor2 = ((int16_t*)rxdata)[1];
-//		targetSpeed.motor3 = ((int16_t*)rxdata)[2];
-//		targetSpeed.motor4 = ((int16_t*)rxdata)[3];
-//
-////		printf("  --> targetSpeed.motor1 == %i (%04x)\r\n", targetSpeed.motor1, targetSpeed.motor1);
-////		printf("  --> targetSpeed.motor2 == %i (%04x)\r\n", targetSpeed.motor2, targetSpeed.motor2);
-////		printf("  --> targetSpeed.motor3 == %i (%04x)\r\n", targetSpeed.motor3, targetSpeed.motor3);
-////		printf("  --> targetSpeed.motor4 == %i (%04x)\r\n", targetSpeed.motor4, targetSpeed.motor4);
-//
-//		PID_UpdateTargetSpeed(targetSpeed);
-//
-//		break;
-//	case 0xFF40: // Headlights
-//		printf("Headlights Message received!\r\n");
-//	}
-//}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -228,9 +225,6 @@ TIM_HandleTypeDef htim12;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-// ADC_ChannelConfTypeDef sConfig = {0};
-
-//TIM_HandleTypeDef *encoder_timers[4] = {&htim1, &htim3, &htim4, &htim5};
 
 /* USER CODE END PV */
 
@@ -249,6 +243,15 @@ static void MX_TIM4_Init(void);
 uint8_t crc8_j1850(const uint8_t *data, size_t len);
 static HAL_StatusTypeDef Send_Rover_Speed_Feedback(float rpm_front_left, float rpm_front_right,
                                                      float rpm_rear_left, float rpm_rear_right);
+extern UART_HandleTypeDef huart2;
+
+#ifdef RE_SIMULATION
+  int _write(int file, char *ptr, int len)
+  {
+    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+  }
+#endif
 
 /* USER CODE END PFP */
 
@@ -330,11 +333,7 @@ int main(void)
   //HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
 
   HAL_TIM_Base_Start(&htim12);
-
-//  for (int i = 0; i < 4; i++) {
-//      prev_count[i] = (int32_t)__HAL_TIM_GET_COUNTER(encoder_timers[i]);
-//  }
-
+  printf("System Ready\r\n");
 
   /* USER CODE END 2 */
 
@@ -345,142 +344,64 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	//Read Pot. ADC CH4 & Set Motor 1 Speed
-//	sConfig.Channel = ADC_CHANNEL_4;
-//	HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-//	HAL_ADC_Start(&hadc1);
-//	HAL_ADC_PollForConversion(&hadc1, 1);
-//	AD1_RES = HAL_ADC_GetValue(&hadc1);
-//	AD1_RES = 0.5 * AD1_RES;
-//	if (AD1_RES < 0.05*4095)
-//	{
-//		DC_MOTOR_Stop(DC_MOTOR1);
-//	}
-//	else
-//	{
-//		DC_MOTOR_Set_Speed(DC_MOTOR1, AD1_RES);
-//	}
-//
-//	//Motor 2
-//	sConfig.Channel = ADC_CHANNEL_7;
-//	HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-//	HAL_ADC_Start(&hadc1);
-//	HAL_ADC_PollForConversion(&hadc1, 1);
-//	AD2_RES = HAL_ADC_GetValue(&hadc1);
-//	if (AD2_RES < 0.05*4095)
-//	{
-//		DC_MOTOR_Stop(DC_MOTOR2);
-//	}
-//	else
-//	{
-//		DC_MOTOR_Set_Speed(DC_MOTOR2, AD2_RES);
-//	}
-
+        
 	//Motor L
-	if (PWM_RES[0] < 0)
+	DC_MOTOR_Set_Dir(DC_MOTOR1, (PWM_RES[0] < 0) ? DIR_CCW: DIR_CW);
+	const float absPWM0 = fabsf(PWM_RES[0]);
+        if (absPWM0 < 0.05*4095)
 	{
-		DC_MOTOR_Set_Dir(DC_MOTOR1, DIR_CCW);
-		DC_MOTOR_Set_Dir(DC_MOTOR3, DIR_CCW);
-		N_PWM_RES[0] = -1 * PWM_RES[0];
-		N_PWM_RES[2] = -1 * PWM_RES[2];
-
-		if (N_PWM_RES[0] < 0.05*4095)
-		{
-			DC_MOTOR_Stop(DC_MOTOR1);
-			DC_MOTOR_Stop(DC_MOTOR3);
-		}
-		else
-		{
-			DC_MOTOR_Set_Speed(DC_MOTOR1, N_PWM_RES[0]);
-			DC_MOTOR_Set_Speed(DC_MOTOR3, N_PWM_RES[2]);
-		}
+	        DC_MOTOR_Stop(DC_MOTOR1);
 	}
 	else
 	{
-		DC_MOTOR_Set_Dir(DC_MOTOR1, DIR_CW);
-		DC_MOTOR_Set_Dir(DC_MOTOR3, DIR_CW);
-
-		if (PWM_RES[0] < 0.05*4095)
-		{
-			DC_MOTOR_Stop(DC_MOTOR1);
-			DC_MOTOR_Stop(DC_MOTOR3);
-		}
-		else
-		{
-			DC_MOTOR_Set_Speed(DC_MOTOR1, PWM_RES[0]);
-			DC_MOTOR_Set_Speed(DC_MOTOR3, PWM_RES[2]);
-		}
+	        uint16_t speedVal =  (uint16_t)absPWM0;
+	        if (speedVal > 32767) speedVal = 32767;
+	        DC_MOTOR_Set_Speed(DC_MOTOR1, speedVal);
 	}
-
-
+	
+	DC_MOTOR_Set_Dir(DC_MOTOR3, (PWM_RES[2] < 0) ? DIR_CCW: DIR_CW);
+	const float absPWM2 = fabsf(PWM_RES[2]);
+        if (absPWM2 < 0.05*4095)
+	{
+	        DC_MOTOR_Stop(DC_MOTOR3);
+	}
+	else
+	{
+	        uint16_t speedVal =  (uint16_t)absPWM2;
+	        if (speedVal > 32767) speedVal = 32767;
+	        DC_MOTOR_Set_Speed(DC_MOTOR3, speedVal);
+	}
+	
 	//Motor R
-	if (PWM_RES[1] < 0)
+	DC_MOTOR_Set_Dir(DC_MOTOR2, (PWM_RES[1] < 0) ? DIR_CW: DIR_CCW);
+	const float absPWM1 = fabsf(PWM_RES[1]);
+        if (absPWM1 < 0.05*4095)
 	{
-		DC_MOTOR_Set_Dir(DC_MOTOR2, DIR_CW);
-		DC_MOTOR_Set_Dir(DC_MOTOR4, DIR_CW);
-		N_PWM_RES[1] = -1 * PWM_RES[1];
-		N_PWM_RES[3] = -1 * PWM_RES[3];
-
-		if (N_PWM_RES[1] < 0.05*4095)
-		{
-			DC_MOTOR_Stop(DC_MOTOR2);
-			DC_MOTOR_Stop(DC_MOTOR4);
-		}
-		else
-		{
-			DC_MOTOR_Set_Speed(DC_MOTOR2, N_PWM_RES[1]);
-			DC_MOTOR_Set_Speed(DC_MOTOR4, N_PWM_RES[3]);
-		}
+	        DC_MOTOR_Stop(DC_MOTOR2);
 	}
 	else
 	{
-		DC_MOTOR_Set_Dir(DC_MOTOR2, DIR_CCW);
-		DC_MOTOR_Set_Dir(DC_MOTOR4, DIR_CCW);
-
-		if (PWM_RES[1] < 0.05*4095)
-		{
-			DC_MOTOR_Stop(DC_MOTOR2);
-			DC_MOTOR_Stop(DC_MOTOR4);
-		}
-		else
-		{
-			DC_MOTOR_Set_Speed(DC_MOTOR2, PWM_RES[1]);
-			DC_MOTOR_Set_Speed(DC_MOTOR4, PWM_RES[3]);
-		}
+	        uint16_t speedVal =  (uint16_t)absPWM1;
+	        if (speedVal > 32767) speedVal = 32767;
+	        DC_MOTOR_Set_Speed(DC_MOTOR2, speedVal);
+	}
+	
+	DC_MOTOR_Set_Dir(DC_MOTOR4, (PWM_RES[3] < 0) ? DIR_CW: DIR_CCW);
+	const float absPWM3 = fabsf(PWM_RES[3]);
+        if (absPWM3 < 0.05*4095)
+	{
+	        DC_MOTOR_Stop(DC_MOTOR4);
+	}
+	else
+	{
+	        uint16_t speedVal =  (uint16_t)absPWM3;
+	        if (speedVal > 32767) speedVal = 32767;
+	        DC_MOTOR_Set_Speed(DC_MOTOR4, speedVal);
 	}
 
 	static uint16_t prev_tick = 0;
 	uint16_t now      = (uint16_t)__HAL_TIM_GET_COUNTER(&htim12);
 	uint16_t dt_ticks = now - prev_tick;
-
-//	if (dt_ticks >= 200)
-//	{
-//	    prev_tick = now;
-//	    float dt_sec = dt_ticks * 0.0001f;
-//
-//	    for (int i = 0; i < 4; i++)
-//	    {
-//	        uint16_t count16 = (uint16_t)__HAL_TIM_GET_COUNTER(encoder_timers[i]);
-//	        uint16_t diff16   = (uint16_t)(count16 - (uint16_t)prev_count[i]);
-//	        int32_t  delta    = (int32_t)(int16_t)diff16;
-//	        prev_count[i]     = (int32_t)count16;
-//	        last_delta[i]     = delta;
-//
-//	        float rev     = (float)delta / 1024.0f;
-//	        float raw_rpm = (rev / dt_sec) * 60.0f;
-//	        rpm[i]        = rpm[i] * 0.8f + raw_rpm * 0.2f;
-//	        wheel_rpm[i]  = rpm[i] / 77.0f;
-//
-//	        //printf("wheel %d: %.2f rpm\r\n", i, wheel_rpm[i]);
-//	    }
-//
-//	    uint32_t now_ms = HAL_GetTick();
-//	    if ((now_ms - last_feedback_tx_ms) >= FEEDBACK_TX_PERIOD_MS)
-//	    {
-//	        last_feedback_tx_ms = now_ms;
-//	        //Send_Rover_Speed_Feedback(wheel_rpm[0], wheel_rpm[1], wheel_rpm[2], wheel_rpm[3]);
-//	    }
-//	}
   }
 
   /* USER CODE END 3 */
@@ -518,8 +439,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
+  /** Initializes the CPU, AHB and APB buses clocks**/
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;

@@ -13,7 +13,7 @@
  * umrt-can-definitions before relying on this. It was free as of our last
  * check but that repo is shared -- verify against the live Messages.sym.
  * ------------------------------------------------------------------- */
-#define FRONT_HEADLIGHT_COMMAND_ID    0x18FFEC00UL   /* SA bits zeroed, placeholder */
+#define FRONT_HEADLIGHT_COMMAND_ID    0x00FFEC00UL   /* SA bits zeroed, placeholder */
 #define FRONT_HEADLIGHT_COMMAND_MASK  0x1FFFFF00UL   /* match everything except SA */
 
 /* --- Wiring ------------------------------------------------------------

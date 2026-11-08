@@ -1,4 +1,5 @@
 #include "UMRT/headlight_control.h"
+#include <stdio.h>
 
 static Headlight_State_t s_currentState = HEADLIGHT_STATE_OFF;
 
@@ -43,16 +44,20 @@ void Headlight_HandleCanFrame(const CAN_RxHeaderTypeDef *rxHeader, const uint8_t
         case HEADLIGHT_STATE_OFF:
             s_currentState = HEADLIGHT_STATE_OFF;
             Headlight_SetPin(0);
+            printf("Headlights off\r\n");
             break;
+            
 
         case HEADLIGHT_STATE_ON:
             s_currentState = HEADLIGHT_STATE_ON;
             Headlight_SetPin(1);
+            printf("Headlights on\r\n");
             break;
 
         case HEADLIGHT_STATE_NOT_AVAILABLE:
             /* Sender has nothing to say this cycle. Hold whatever was last
              * commanded -- don't touch the pin. */
+             printf("Headlights ST NA\r\n");
             break;
 
         case HEADLIGHT_STATE_ERROR:
@@ -60,6 +65,7 @@ void Headlight_HandleCanFrame(const CAN_RxHeaderTypeDef *rxHeader, const uint8_t
              * what an "error" state should mean electrically. */
             s_currentState = HEADLIGHT_STATE_ERROR;
             Headlight_SetPin(0);
+            printf("Headlights ERR\r\n");
             break;
 
         default:

@@ -17,8 +17,8 @@
 
 void DC_MOTOR_Init(uint8_t au8_MOTOR_Instance)
 {
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
     TIM_MasterConfigTypeDef sMasterConfig = {0};
     TIM_OC_InitTypeDef sConfigOC = {0};
     TIM_HandleTypeDef htim;

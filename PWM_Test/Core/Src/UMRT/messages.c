@@ -203,9 +203,9 @@ uint16_t messages_rover_speed_control_left_angular_velocity_encode(double value)
     return (uint16_t)((value - -4016.0) / 0.125);
 }
 
-double messages_rover_speed_control_left_angular_velocity_decode(uint16_t value)
+float messages_rover_speed_control_left_angular_velocity_decode(uint16_t value)
 {
-    return (((double)value * 0.125) + -4016.0);
+    return (((float)value * 0.125) + -4016.0);
 }
 
 bool messages_rover_speed_control_left_angular_velocity_is_in_range(uint16_t value)
@@ -223,9 +223,9 @@ uint16_t messages_rover_speed_control_right_angular_velocity_encode(double value
     return (uint16_t)((value - -4016.0) / 0.125);
 }
 
-double messages_rover_speed_control_right_angular_velocity_decode(uint16_t value)
+float messages_rover_speed_control_right_angular_velocity_decode(uint16_t value)
 {
-    return (((double)value * 0.125) + -4016.0);
+    return (((float)value * 0.125) + -4016.0);
 }
 
 bool messages_rover_speed_control_right_angular_velocity_is_in_range(uint16_t value)

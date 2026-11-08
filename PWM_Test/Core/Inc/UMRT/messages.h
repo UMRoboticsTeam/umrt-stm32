@@ -74,7 +74,7 @@ extern "C" {
 #define MESSAGES_BMS_BALANCE_STATE_FRAME_ID (0x974001u)
 #define MESSAGES_BMS_FAULTS_REQ_FRAME_ID (0x980140u)
 #define MESSAGES_SOIL_SENSOR_FRAME_ID (0x18ffeb00u)
-#define MESSAGES_FRONT_HEADLIGHT_COMMAND_FRAME_ID (0xffec80u)
+#define MESSAGES_FRONT_HEADLIGHT_COMMAND_FRAME_ID (0x00FFEC00UL)
 
 /* Frame lengths in bytes. */
 #define MESSAGES_ROVER_SPEED_CONTROL_LENGTH (8u)
@@ -1806,7 +1806,7 @@ uint16_t messages_rover_speed_control_left_angular_velocity_encode(double value)
  *
  * @return Decoded signal.
  */
-double messages_rover_speed_control_left_angular_velocity_decode(uint16_t value);
+float messages_rover_speed_control_left_angular_velocity_decode(uint16_t value);
 
 /**
  * Check that given signal is in allowed range.
@@ -1846,7 +1846,7 @@ uint16_t messages_rover_speed_control_right_angular_velocity_encode(double value
  *
  * @return Decoded signal.
  */
-double messages_rover_speed_control_right_angular_velocity_decode(uint16_t value);
+float messages_rover_speed_control_right_angular_velocity_decode(uint16_t value);
 
 /**
  * Check that given signal is in allowed range.
