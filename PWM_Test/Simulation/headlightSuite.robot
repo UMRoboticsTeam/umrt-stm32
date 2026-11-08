@@ -20,7 +20,7 @@ Reset And Boot Target Chip
   Reset Emulation
   Execute Command  emulation CreateCANHub "can_network"
   Execute Command  mach create "STM32F446"
-  Execute Command  machine LoadPlatformDescription @/repo/PWM_Test/Simulation/STM32F446RETx.repl
+  Execute Command  machine LoadPlatformDescription @repo/PWM_Test/Simulation/STM32F446RETx.repl
   Execute Command  sysbus LoadELF @/data/build/PWM_Test
   Execute Command  connector Connect sysbus.can1 can_network
   Execute Command  sysbus WriteDoubleWord 0x40006404 0x00000001
