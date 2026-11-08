@@ -23,6 +23,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{secrets.GITHUB_TOKEN }}
+      options: --entrypoint /bin/bash
 
     steps:
       - name: Checkout Project
