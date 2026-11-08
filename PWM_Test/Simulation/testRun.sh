@@ -1,6 +1,7 @@
 #!/bin/bash
+shopt -s globstar nullglob
 
-for file in *.robot; do
+for file in ./**/*.robot; do
 	[ -e "$file" ] || continue
 	echo "====================================================="
 	echo "Running TestSuite: $file"
