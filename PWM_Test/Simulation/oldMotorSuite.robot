@@ -20,8 +20,8 @@ Reset And Boot Target Chip
   Reset Emulation
   Execute Command  emulation CreateCANHub "can_network"
   Execute Command  mach create "STM32F446"
-  Execute Command  machine LoadPlatformDescription @/data/Simulation/STM32F446RETx.repl
-  Execute Command  sysbus LoadELF @/data/build/PWM_Test
+  Execute Command  machine LoadPlatformDescription @${CURDIR}/STM32F446RETx.repl
+  Execute Command  sysbus LoadELF @${CURDIR}/../build/PWM_Test
   Execute Command  connector Connect sysbus.can1 can_network
   Execute Command  sysbus WriteDoubleWord 0x40006404 0x00000001
   Execute Command  sysbus WriteDoubleWord 0x40006400 0x0000000
@@ -29,7 +29,7 @@ Reset And Boot Target Chip
   Execute Command  python "self.Machine['sysbus.can1'].UpdateFifo0InterruptLine()"
   Create Terminal Tester  ${UART_PERIPHERAL}  timeout=10  defaultPauseEmulation=False
   ${safe_name}=      Evaluate    "${TEST_NAME}".replace(" ", "_")
-  # Execute Command    sysbus.cpu CreateExecutionTracing "test_tracer" @/data/traces/${safe_name}.bin.gz PC true true  
+  # Execute Command    sysbus.cpu CreateExecutionTracing "test_tracer" @${CURDIR}/../traces/${safe_name}.bin.gz PC true true  
   Execute Command    emulation SetAdvanceImmediately false
 
 Stop Code Coverage and Pause
