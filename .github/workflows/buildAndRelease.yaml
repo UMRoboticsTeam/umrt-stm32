@@ -15,7 +15,7 @@ jobs:
     if: github.event.pull_request.merged == true
     strategy:
       matrix:
-        project_dir: [ "PWM_TEST" ]
+        project_dir: [ "PWM_Test" ]
       fail-fast: false
 
     container:
