@@ -6,9 +6,9 @@ const DC_MOTOR_CfgType DC_MOTOR_CfgParam[DC_MOTOR_UNITS] =
     {
     GPIOA,
     GPIOB,
-    GPIO_PIN_7,
+    GPIO_PIN_4,
     GPIO_PIN_13,
-    TIM3,
+    TIM2,
     TIM_CHANNEL_1,
     84,
     DC_MOTOR_F_PWM,
@@ -16,11 +16,11 @@ const DC_MOTOR_CfgType DC_MOTOR_CfgParam[DC_MOTOR_UNITS] =
     },
 	// DC MOTOR 2 Configurations
 	{
-	GPIOA,
 	GPIOB,
-	GPIO_PIN_8,
+	GPIOB,
+	GPIO_PIN_4,
 	GPIO_PIN_13,
-	TIM3,
+	TIM2,
 	TIM_CHANNEL_2,
 	84,
 	DC_MOTOR_F_PWM,
@@ -28,11 +28,11 @@ const DC_MOTOR_CfgType DC_MOTOR_CfgParam[DC_MOTOR_UNITS] =
 	},
 	// DC MOTOR 3 Configurations
 	{
-	GPIOA,
 	GPIOB,
-	GPIO_PIN_9,
+	GPIOB,
+	GPIO_PIN_0,
 	GPIO_PIN_13,
-	TIM3,
+	TIM2,
 	TIM_CHANNEL_3,
 	84,
 	DC_MOTOR_F_PWM,
@@ -40,11 +40,11 @@ const DC_MOTOR_CfgType DC_MOTOR_CfgParam[DC_MOTOR_UNITS] =
 	},
 	// DC MOTOR 4 Configurations
 	{
-	GPIOA,
 	GPIOB,
-	GPIO_PIN_10,
+	GPIOB,
+	GPIO_PIN_5,
 	GPIO_PIN_13,
-	TIM3,
+	TIM2,
 	TIM_CHANNEL_4,
 	84,
 	DC_MOTOR_F_PWM,

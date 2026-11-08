@@ -1,0 +1,38 @@
+name: Build and Test
+
+on:
+  push:
+
+jobs:
+  build-stm-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        project_dir: [ "PWM_Test" ]
+      fail-fast: false
+
+    container:
+      image: ghcr.io/umroboticsteam/umrt-stm32-tester-build-image
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Build Code
+        run: |
+          cd repo/${{ matrix.project_dir }}
+          rm -rf build
+          cmake -S . -B build
+          cmake --build build
+
+      - name: Test Code
+        run: |
+          cd repo
+          chmod +x ./${{ matrix.project_dir }}/Simulation/testRun.sh
+          ./${{ matrix.project_dir }}/Simulation/testRun.sh

@@ -1,0 +1,60 @@
+name: Build and Test
+
+on:
+  pull_request:
+    branches: [ "main" ]
+    types: [ "closed" ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-stm-and-test:
+    runs-on: ubuntu-latest
+
+    if: github.event.pull_request.merged == true
+    strategy:
+      matrix:
+        project_dir: [ "PWM_Test" ]
+      fail-fast: false
+
+    container:
+      image: ghcr.io/umroboticsteam/umrt-stm32-tester-build-image
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{secrets.GITHUB_TOKEN }}
+      options: --entrypoint /bin/bash
+
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Build Code
+        run: |
+          cd repo/${{ matrix.project_dir }}
+          rm -rf build
+          cmake -S . -B build -DRE_SIMULATION=OFF
+          cmake --build build
+
+      - name: Get Version
+        id: version
+        run: |
+          cd repo
+          echo "VERSION=$(cat version)" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v${{ steps.version.outputs.VERSION }}"
+          gh release create "$TAG_NAME" --title "$TAG_NAME" --notes "Automated build for $TAG_NAME" || true
+          cd repo/${{ matrix.project_dir }}/build
+          for file in ./*; do
+            if [ -f "$file" ]; then
+              if file -b "$file" | grep -q "^ELF"; then
+                gh release upload "$TAG_NAME" "$file" --clobber
+              fi
+            fi
+          done

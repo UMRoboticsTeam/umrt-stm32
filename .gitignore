@@ -1,4 +1,6 @@
 PWM_Test/.settings/
 PWM_Test/Debug/
+PWM_Test/Build
+PWM_Test/traces
 .vscode/
 .metadata/
