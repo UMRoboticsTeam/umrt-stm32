@@ -35,5 +35,5 @@ jobs:
       - name: Test Code
         run: |
           cd repo/${{ matrix.project_dir }}/Simulation
-          chmod +x ./testrun.sh
+          chmod +x ./testRun.sh
           ./testrun.sh
