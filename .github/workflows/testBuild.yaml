@@ -59,7 +59,7 @@ jobs:
           cd repo
           mkdir traces
           shopt -s globstar nullglob
-	
+
           files=( ./**/*.robot )
 
           if [ ${#files[@]} -eq 0 ]; then
@@ -72,6 +72,7 @@ jobs:
             renode-test "$file"
             echo "::endgroup::"
           done
+
 
       - name: Generate Line Coverage Report
         run: |
