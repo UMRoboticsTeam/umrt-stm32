@@ -57,6 +57,7 @@ jobs:
         shell: bash
         run: |
           cd repo
+          mkdir traces
           shopt -s globstar nullglob
 
           files=( ./**/*.robot )
@@ -71,6 +72,7 @@ jobs:
             renode-test "$file"
             echo "::endgroup::"
           done
+
 
       - name: Generate Line Coverage Report
         run: |
