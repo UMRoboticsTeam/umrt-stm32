@@ -4,19 +4,37 @@ on:
   push:
 
 jobs:
-  build-stm-and-test:
+  find-all-cmake-jobs:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        project_dir: [ "PWM_Test" ]
-      fail-fast: false
+    outputs:
+      project_dir: ${{ steps.cmake-jobs.outputs.dirs}}
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+        with:
+          path: repo
+      
+      - name: Find all CMake.txt 
+        id: cmake-jobs
+        run: |
+          cd repo
+          DIRECTORY=$(find . \( -name "CMakeLists.txt" -o -name "*.cmake" \) -printf '%h\n' | sort -u | jq -R . | jq -cs '{include: map({project_dir: .})}')
+          echo "dirs=$DIRECTORY" >> "$GITHUB_OUTPUT"
 
+  build-and-test:
+    runs-on: ubuntu-latest
     container:
       image: ghcr.io/umroboticsteam/umrt-stm32-tester-build-image
       credentials:
         username: ${{ github.actor }}
-        password: ${{secrets.GITHUB_TOKEN }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    needs: find-all-cmake-jobs
+
+    strategy:
+      matrix: ${{ fromJson(needs.find-all-cmake-jobs.outputs.project_dir) }}
+      fail-fast: false
 
     steps:
       - name: Checkout Project
@@ -28,11 +46,58 @@ jobs:
         run: |
           cd repo/${{ matrix.project_dir }}
           rm -rf build
-          cmake -S . -B build
+          cmake -S . -B build \
+            -DRE_SIMULATION=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-O0 -g3" \
+            -DCMAKE_CXX_FLAGS="-O0 -g3"
           cmake --build build
 
       - name: Test Code
         run: |
           cd repo
-          chmod +x ./${{ matrix.project_dir }}/Simulation/testRun.sh
-          ./${{ matrix.project_dir }}/Simulation/testRun.sh
+          shopt -s globstar nullglob
+          
+          files=( ./**/*.robot )
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo ::warning::No Jobs Found
+            exit 0;
+          fi
+
+          for file in "${files[@]}"; do
+            echo "::group::Running Test Suite: $file"
+            renode-test "$file"
+            echo "::endgroup::"    
+          done
+
+      - name: Generate Line Coverage Report
+        run: | 
+          cd repo
+          
+          if [ ! -d "./${{ matrix.project_dir }}/traces" ]; then
+            echo "::warning::No traces Found"
+            exit 0;
+          fi
+          
+          ELF=$(find "./${{ matrix.project_dir }}/build" -maxdepth 1 -type f -exec sh -c 'file -b "$1" | grep -q "^ELF"' _ {} \; -print -quit)
+          renode-retracer coverage ./${{ matrix.project_dir }}/traces/*.gz \
+            --binary "$ELF" --output ./${{ matrix.project_dir }}/coverage.info
+
+          lcov --extract ./${{ matrix.project_dir }}/coverage.info "$(pwd)/*" --ignore-errors unused  --output-file coverage-clean.info
+          lcov --summary coverage-clean.info
+
+  all-jobs-completed:
+    needs: [find-all-cmake-jobs, build-and-test]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Job Failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "One or More Jobs Failed"
+          exit 1
+        
+      - name: All Jobs Passed
+        run: echo "All Jobs Passed"
