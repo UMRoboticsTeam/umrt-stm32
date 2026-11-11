@@ -29,7 +29,7 @@ jobs:
         id: cmake-jobs
         run: |
           cd repo
-          DIRECTORY=$(find . \( -name "CMakeLists.txt" -o -name "*.cmake" \) -printf '%h\n' | sort -u | jq -R . | jq -cs '{include: map({project_dir: .})}')
+          DIRECTORY=$(find . \( -name "CMakeLists.txt" \) -printf '%h\n' | sort -u | jq -R . | jq -cs '{include: map({project_dir: .})}')
           echo "dirs=$DIRECTORY" >> "$GITHUB_OUTPUT"
       
       - name: Get Version

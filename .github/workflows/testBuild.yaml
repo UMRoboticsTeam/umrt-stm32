@@ -14,12 +14,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: repo
-      
-      - name: Find all CMake.txt 
+
+      - name: Find all CMake.txt
         id: cmake-jobs
         run: |
           cd repo
-          DIRECTORY=$(find . \( -name "CMakeLists.txt" -o -name "*.cmake" \) -printf '%h\n' | sort -u | jq -R . | jq -cs '{include: map({project_dir: .})}')
+          DIRECTORY=$(find . \( -name "CMakeLists.txt" \) -printf '%h\n' | sort -u | jq -R . | jq -cs '{include: map({project_dir: .})}')
           echo "dirs=$DIRECTORY" >> "$GITHUB_OUTPUT"
 
   build-and-test:
@@ -29,7 +29,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    
+
     needs: find-all-cmake-jobs
 
     strategy:
@@ -54,10 +54,11 @@ jobs:
           cmake --build build
 
       - name: Test Code
+        shell: bash
         run: |
           cd repo
           shopt -s globstar nullglob
-          
+
           files=( ./**/*.robot )
 
           if [ ${#files[@]} -eq 0 ]; then
@@ -68,13 +69,13 @@ jobs:
           for file in "${files[@]}"; do
             echo "::group::Running Test Suite: $file"
             renode-test "$file"
-            echo "::endgroup::"    
+            echo "::endgroup::"
           done
 
       - name: Generate Line Coverage Report
-        run: | 
+        run: |
           cd repo
-          
+
           if [ ! -d "./${{ matrix.project_dir }}/traces" ]; then
             echo "::warning::No traces Found"
             exit 0;
