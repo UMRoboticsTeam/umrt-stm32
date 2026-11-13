@@ -47,7 +47,8 @@
 #define DC_MOTOR4    3
 
 #define PI_VALUE 3.14159265358979323846
-
+#define MESSAGES_LEGACY_JETSON_MOTOR_CONTROL_STD_ID (0x110u)
+#define MESSAGES_LEGACY_JETSON_MOTOR_CONTROL_EXT_ID (0xFF10u)
 typedef struct {
 	float motor1;
 	float motor2;
@@ -55,25 +56,7 @@ typedef struct {
 	float motor4;
 } MotorMessage;
 
-#define SOIL_SENSOR_FRAME_ID  (0x18FFEB00u)
-
-typedef struct {
-    int16_t temperature; // raw, 0.1 degC/bit
-    int16_t humidity;    // raw, 0.1 %RH/bit
-    int16_t ec;          // raw, unscaled (see note below)
-    int16_t ph;          // raw, 0.1 pH/bit
-} SoilSensorMessage;
-
-void PrintSoilSensor(SoilSensorMessage msg) {
-    printf("Soil: T=%.1f C  H=%.1f %%RH  EC=%d  pH=%.1f\r\n",
-           msg.temperature * 0.1f,
-           msg.humidity * 0.1f,
-           msg.ec * 0.1f,
-           msg.ph * 0.1f);
-}
-
 int16_t PWM_RES[] = {0, 0, 0, 0};
-int16_t N_PWM_RES[] = {0, 0, 0, 0};
 float motor_speed[] = {0, 0, 0, 0};
 
 float MAX_RPM = 1.0f/155.0f;
@@ -83,7 +66,6 @@ float SPEED_SCALE = 0.085f;
 volatile float   rpm[4]        = {0.0f, 0.0f, 0.0f, 0.0f};
 volatile int32_t prev_count[4] = {0, 0, 0, 0};
 volatile float wheel_rpm[4] = {0.0f, 0.0f, 0.0f, 0.0f};  /* post-gear-ratio RPM, one per encoder_timers[] entry */
-
 volatile int32_t last_delta[4] = {0, 0, 0, 0};  /* counts moved last sample    */
 
 #define FEEDBACK_TX_PERIOD_MS 100u   /* 10 Hz — tune this alone, independent of RPM sampling */
@@ -122,10 +104,8 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
     uint32_t id = (rxheader->IDE == CAN_ID_STD) ? rxheader->StdId : rxheader->ExtId;
     switch (id)
     {
-    //Legacy
-    //Jetson
-    case 0xFF10:
-    case 0x110:
+    case MESSAGES_LEGACY_JETSON_MOTOR_CONTROL_EXT_ID:
+    case MESSAGES_LEGACY_JETSON_MOTOR_CONTROL_STD_ID:
         if (rxheader->DLC != 8) return;
 
         MotorMessage targetSpeed;
@@ -181,19 +161,6 @@ void CAN_MsgReceived(CAN_HandleTypeDef *hcan, CAN_RxHeaderTypeDef *rxheader, uin
             break;
         }
 
-    case SOIL_SENSOR_FRAME_ID:
-    {
-        if (rxheader->DLC != 8) return;
-
-        SoilSensorMessage soil;
-        soil.temperature = ((int16_t*)rxdata)[0];
-        soil.humidity    = ((int16_t*)rxdata)[1];
-        soil.ec          = ((int16_t*)rxdata)[2];
-        soil.ph          = ((int16_t*)rxdata)[3];
-
-        //PrintSoilSensor(soil);
-        break;
-    }
 
     //Headlights
     case MESSAGES_FRONT_HEADLIGHT_COMMAND_FRAME_ID: 
@@ -264,6 +231,23 @@ int __io_putchar(int ch) {
 	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
   }
   return ch;
+}
+
+static void Drive_Motor(uint8_t motor_id, int16_t pwm_value, bool left_motor) {
+  if (left_motor) {
+    DC_MOTOR_Set_Dir(motor_id, (pwm_value < 0) ? DIR_CCW: DIR_CW);
+  } else {
+    DC_MOTOR_Set_Dir(motor_id, (pwm_value < 0) ? DIR_CW: DIR_CCW);
+  } 
+  const float absPWM = fabsf(pwm_value);
+    if (absPWM < 0.05*4095) {
+          DC_MOTOR_Stop(motor_id); 
+        }
+        else{ 
+          uint16_t speedVal =  (uint16_t)absPWM;
+          if (speedVal > 32767) speedVal = 32767;
+          DC_MOTOR_Set_Speed(motor_id, speedVal);
+        }
 }
 /* USER CODE END 0 */
 
@@ -344,66 +328,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-        
-	//Motor L
-	DC_MOTOR_Set_Dir(DC_MOTOR1, (PWM_RES[0] < 0) ? DIR_CCW: DIR_CW);
-	const float absPWM0 = fabsf(PWM_RES[0]);
-        if (absPWM0 < 0.05*4095)
-	{
-	        DC_MOTOR_Stop(DC_MOTOR1);
-	}
-	else
-	{
-	        uint16_t speedVal =  (uint16_t)absPWM0;
-	        if (speedVal > 32767) speedVal = 32767;
-	        DC_MOTOR_Set_Speed(DC_MOTOR1, speedVal);
-	}
-	
-	DC_MOTOR_Set_Dir(DC_MOTOR3, (PWM_RES[2] < 0) ? DIR_CCW: DIR_CW);
-	const float absPWM2 = fabsf(PWM_RES[2]);
-        if (absPWM2 < 0.05*4095)
-	{
-	        DC_MOTOR_Stop(DC_MOTOR3);
-	}
-	else
-	{
-	        uint16_t speedVal =  (uint16_t)absPWM2;
-	        if (speedVal > 32767) speedVal = 32767;
-	        DC_MOTOR_Set_Speed(DC_MOTOR3, speedVal);
-	}
-	
-	//Motor R
-	DC_MOTOR_Set_Dir(DC_MOTOR2, (PWM_RES[1] < 0) ? DIR_CW: DIR_CCW);
-	const float absPWM1 = fabsf(PWM_RES[1]);
-        if (absPWM1 < 0.05*4095)
-	{
-	        DC_MOTOR_Stop(DC_MOTOR2);
-	}
-	else
-	{
-	        uint16_t speedVal =  (uint16_t)absPWM1;
-	        if (speedVal > 32767) speedVal = 32767;
-	        DC_MOTOR_Set_Speed(DC_MOTOR2, speedVal);
-	}
-	
-	DC_MOTOR_Set_Dir(DC_MOTOR4, (PWM_RES[3] < 0) ? DIR_CW: DIR_CCW);
-	const float absPWM3 = fabsf(PWM_RES[3]);
-        if (absPWM3 < 0.05*4095)
-	{
-	        DC_MOTOR_Stop(DC_MOTOR4);
-	}
-	else
-	{
-	        uint16_t speedVal =  (uint16_t)absPWM3;
-	        if (speedVal > 32767) speedVal = 32767;
-	        DC_MOTOR_Set_Speed(DC_MOTOR4, speedVal);
-	}
-
-	static uint16_t prev_tick = 0;
-	uint16_t now      = (uint16_t)__HAL_TIM_GET_COUNTER(&htim12);
-	uint16_t dt_ticks = now - prev_tick;
+  Drive_Motor(DC_MOTOR1, PWM_RES[0], true); //left front
+  Drive_Motor(DC_MOTOR2, PWM_RES[1], false); //right front
+  Drive_Motor(DC_MOTOR3, PWM_RES[2], true);  //left rear
+  Drive_Motor(DC_MOTOR4, PWM_RES[3], false); //right rear
   }
-
   /* USER CODE END 3 */
 }
 
