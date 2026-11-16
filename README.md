@@ -1,7 +1,6 @@
 # umrt-stm32
 Main Project of STM32
 
-
 # Testing with Renode
 Renode is a software that allows for us to test these STM project before we test on a physical board.
 

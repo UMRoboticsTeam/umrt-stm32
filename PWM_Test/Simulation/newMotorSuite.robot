@@ -18,16 +18,28 @@ ${ARR_VALUE}              4094
 Reset And Boot Target Chip
   [Documentation]  Wipes the state. Loads a new Board.
   Reset Emulation
+  
+  # Create New STM Board and create CAN network
   Execute Command  emulation CreateCANHub "can_network"
   Execute Command  mach create "STM32F446"
+  
+  # Loading device and software
   Execute Command  machine LoadPlatformDescription @${CURDIR}/STM32F446RETx.repl
   Execute Command  sysbus LoadELF @${CURDIR}/../build/PWM_Test
+  
+  # Connect CAN device to STM Board
   Execute Command  connector Connect sysbus.can1 can_network
+  
+  # Fixes for getting the STM Board to Simulate Properly
   Execute Command  sysbus WriteDoubleWord 0x40006404 0x00000001
   Execute Command  sysbus WriteDoubleWord 0x40006400 0x0000000
   Execute Command  python "self.Machine['sysbus.can1'].WriteDoubleWord(0x14, 0x2)"
   Execute Command  python "self.Machine['sysbus.can1'].UpdateFifo0InterruptLine()"
+  
+  # The UART output for the tests
   Create Terminal Tester  ${UART_PERIPHERAL}  timeout=10  defaultPauseEmulation=False
+  
+  # Creating coverage report
   ${safe_name}=      Evaluate    "${TEST_NAME}".replace(" ", "_")
   # Execute Command    sysbus.cpu CreateExecutionTracing "test_tracer" @${CURDIR}/../traces/${safe_name}.bin.gz PC true true  
   Execute Command    emulation SetAdvanceImmediately false
@@ -41,11 +53,15 @@ Stop Code Coverage and Pause
 Motor Has Updated
     [Arguments]     ${addr}     ${timer}     ${exp_ccr}      ${exp_duty}
     
-    ${limit}=      Execute Command     ${timer} Limit
-    ${raw_val}=    Execute Command     sysbus ReadDoubleWord ${addr}
+    ${limit}=           Execute Command     ${timer} Limit
+    ${int_limit}=       Evaluate            int($limit.splitlines()[0].strip(), 16)
+    ${raw_val}=         Execute Command     sysbus ReadDoubleWord ${addr}
     
-    ${int_val}=    Evaluate            int("""${raw_val}""".strip(), 16)
-    Should Be Equal As Integers    ${int_val}     ${exp_ccr}  
+    ${int_val}=         Evaluate            int("""${raw_val}""".strip(), 16)
+    ${int_val_duty}=    Evaluate            ${int_val}/${int_limit} * 100
+    
+    Should Be Equal As Integers    ${int_val}          ${exp_ccr}
+    Should Be Equal As Integers    ${int_val_duty}     ${exp_duty}
     
 Led Has Updated
     [Arguments]     ${led}     ${exp_val}
@@ -142,9 +158,50 @@ Verify Motor Function Angular Velocity
     Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortB.led_m2p1     ${motor2_dir}
     Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortB.led_m3p1     ${motor3_dir}
     Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortB.led_m4p1     ${motor4_dir}
+
+Send Bad Motor Command
+    [Documentation]  Allows for user to send any message and check that it still equals the original motor values
+    [Arguments]    ${frame_id}     ${msg}
+    
+    # Get Current Values
+    ${exp_ccr1}=    Execute Command     sysbus ReadDoubleWord 0x40000034
+    ${exp_ccr2}=    Execute Command     sysbus ReadDoubleWord 0x40000038
+    ${exp_ccr3}=    Execute Command     sysbus ReadDoubleWord 0x4000003C
+    ${exp_ccr4}=    Execute Command     sysbus ReadDoubleWord 0x40000040
+    
+    ${exp_duty1}=           Evaluate       (float(${exp_ccr1}) / float(${ARR_VALUE}) * 100)
+    ${exp_duty2}=           Evaluate       (float(${exp_ccr2}) / float(${ARR_VALUE}) * 100)
+    ${exp_duty3}=           Evaluate       (float(${exp_ccr3}) / float(${ARR_VALUE}) * 100)
+    ${exp_duty4}=           Evaluate       (float(${exp_ccr4}) / float(${ARR_VALUE}) * 100)
+    
+    ${motor1_dir_raw}=    Execute Command     gpioPortA.led_m1p1 State
+    ${motor1_dir}=    Evaluate            int(${motor1_dir_raw})
+    
+    ${motor2_dir_raw}=    Execute Command     gpioPortB.led_m2p1 State
+    ${motor2_dir}=    Evaluate            int(${motor2_dir_raw})
+    
+    ${motor3_dir_raw}=    Execute Command     gpioPortB.led_m3p1 State
+    ${motor3_dir}=    Evaluate            int(${motor3_dir_raw})
+    
+    ${motor4_dir_raw}=    Execute Command     gpioPortB.led_m4p1 State
+    ${motor4_dir}=    Evaluate            int(${motor4_dir_raw})
+    
+    
+    # Send CAN Message To STM Board
+    Execute Command        python "import System; bytes_data = System.Array[System.Byte]([${msg}]); print(bytes_data); frame = Antmicro.Renode.Core.CAN.CANMessageFrame(${frame_id}, bytes_data, True); msg = Antmicro.Renode.Peripherals.CAN.STMCAN.CANMessage(frame); self.Machine['sysbus.can1'].ReceiveCANMessage(msg)"
+    
+    # Wait for registry to update before checking values with a max of 1 second of waiting
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Motor Has Updated    0x40000034     sysbus.timer2    ${exp_ccr1}     ${exp_duty1}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Motor Has Updated    0x40000038     sysbus.timer2    ${exp_ccr2}     ${exp_duty2}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Motor Has Updated    0x4000003C     sysbus.timer2    ${exp_ccr3}     ${exp_duty3}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Motor Has Updated    0x40000040     sysbus.timer2    ${exp_ccr4}     ${exp_duty4}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortA.led_m1p1     ${motor1_dir}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortB.led_m2p1     ${motor2_dir}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortB.led_m3p1     ${motor3_dir}
+    Run Keyword   Wait Until Keyword Succeeds    1s     10ms     Led Has Updated      gpioPortB.led_m4p1     ${motor4_dir}
+    
     
 *** Test Cases ***
-
 Scenario 0.0: Engineering Zero
     [Documentation]    Verifies angular velocity decodes to exactly zero.
     Wait For Line On Uart  System Ready
@@ -781,3 +838,134 @@ Scenario 0.110: Recovery Stress Sequence
     Sleep  50ms
     Verify Motor Function Angular Velocity  40128  40128  0      0    0
     
+Scenario 0.111: Bad Command - Zero CAN ID
+    [Documentation]    Verifies CAN ID 0 with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   0           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+Scenario 0.112: Bad Command - Standard ID Off By Minus One (271)
+    [Documentation]    Verifies CAN ID 271 (one below 272) with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   271         0x00, 0x10, 0x20, 0x20, 0x10, 0x00, 0x00, 0x00
+
+Scenario 0.113: Bad Command - Standard ID Off By Plus One (273)
+    [Documentation]    Verifies CAN ID 273 (one above 272) with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   273         0x00, 0x10, 0x20, 0x20, 0x10, 0x00, 0x00, 0x00
+
+Scenario 0.114: Bad Command - Max Standard CAN ID (2047)
+    [Documentation]    Verifies max 11-bit standard CAN ID (0x7FF) with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   2047        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+
+Scenario 0.115: Bad Command - Extended ID Off By Minus One (16771455)
+    [Documentation]    Verifies CAN ID 16771455 (one below 16771456) with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771455    0x00, 0x10, 0x20, 0x20, 0x10, 0x00, 0x00, 0x00
+
+Scenario 0.116: Bad Command - Extended ID Off By Plus One (16771457)
+    [Documentation]    Verifies CAN ID 16771457 (one above 16771456) with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771457    0x00, 0x10, 0x20, 0x20, 0x10, 0x00, 0x00, 0x00
+
+Scenario 0.117: Bad Command - Max Extended CAN ID (536870911)
+    [Documentation]    Verifies max 29-bit extended CAN ID (0x1FFFFFFF) with 8 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   536870911   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+    
+Scenario 0.118: Bad Command - ID 272 With 0 Bytes
+    [Documentation]    Verifies CAN ID 272 with empty payload is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         ${EMPTY}
+
+Scenario 0.119: Bad Command - ID 272 With 1 Byte
+    [Documentation]    Verifies CAN ID 272 with 1 byte is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00
+
+Scenario 0.120: Bad Command - ID 272 With 2 Bytes
+    [Documentation]    Verifies CAN ID 272 with 2 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00, 0x10
+
+Scenario 0.121: Bad Command - ID 272 With 3 Bytes
+    [Documentation]    Verifies CAN ID 272 with 3 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00, 0x10, 0x20
+
+Scenario 0.122: Bad Command - ID 272 With 4 Bytes
+    [Documentation]    Verifies CAN ID 272 with 4 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00, 0x10, 0x20, 0x20
+
+Scenario 0.123: Bad Command - ID 272 With 5 Bytes
+    [Documentation]    Verifies CAN ID 272 with 5 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00, 0x10, 0x20, 0x20, 0x10
+
+Scenario 0.124: Bad Command - ID 272 With 6 Bytes
+    [Documentation]    Verifies CAN ID 272 with 6 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00, 0x10, 0x20, 0x20, 0x10, 0x00
+
+Scenario 0.125: Bad Command - ID 272 With 7 Bytes
+    [Documentation]    Verifies CAN ID 272 with 7 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   272         0x00, 0x10, 0x20, 0x20, 0x10, 0x00, 0x00
+    
+Scenario 0.126: Bad Command - ID 16771456 With 0 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with empty payload is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    ${EMPTY}
+
+Scenario 0.127: Bad Command - ID 16771456 With 1 Byte
+    [Documentation]    Verifies CAN ID 16771456 with 1 byte is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00
+
+Scenario 0.128: Bad Command - ID 16771456 With 2 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with 2 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00, 0x10
+
+Scenario 0.129: Bad Command - ID 16771456 With 3 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with 3 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00, 0x10, 0x20
+
+Scenario 0.130: Bad Command - ID 16771456 With 4 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with 4 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00, 0x10, 0x20, 0x20
+
+Scenario 0.131: Bad Command - ID 16771456 With 5 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with 5 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00, 0x10, 0x20, 0x20, 0x10
+
+Scenario 0.132: Bad Command - ID 16771456 With 6 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with 6 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00, 0x10, 0x20, 0x20, 0x10, 0x00
+
+Scenario 0.133: Bad Command - ID 16771456 With 7 Bytes
+    [Documentation]    Verifies CAN ID 16771456 with 7 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771456    0x00, 0x10, 0x20, 0x20, 0x10, 0x00, 0x00
+
+Scenario 0.134: Bad Command - Wrong ID 271 With 5 Bytes
+    [Documentation]    Verifies CAN ID 271 with 5 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   271         0x00, 0x10, 0x20, 0x20, 0x10
+
+Scenario 0.135: Bad Command - Wrong ID 273 With 1 Byte
+    [Documentation]    Verifies CAN ID 273 with 1 byte is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   273         0xFF
+
+Scenario 0.136: Bad Command - Wrong ID 16771455 With 3 Bytes
+    [Documentation]    Verifies CAN ID 16771455 with 3 bytes is ignored.
+    Wait For Line On Uart    System Ready
+    Send Bad Motor Command   16771455    0x00, 0x00, 0x00
+    
+

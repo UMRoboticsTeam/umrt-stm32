@@ -34,7 +34,7 @@ void Headlight_HandleCanFrame(const CAN_RxHeaderTypeDef *rxHeader, const uint8_t
         return;
     }
 
-    if (rxHeader->DLC < 1) {
+    if (rxHeader->DLC != 1) {
         return; /* malformed frame -- nothing to decode */
     }
 
